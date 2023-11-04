@@ -56,7 +56,10 @@ func (m *MockServers) Run() error {
 	if err := m.udsEchoServer.Run(); err != nil {
 		return err
 	}
-	return m.httpSimpleServer.Run()
+	if err := m.httpSimpleServer.Run(); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (m *MockServers) Close() {

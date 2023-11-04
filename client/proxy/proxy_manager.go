@@ -21,10 +21,8 @@ import (
 	"reflect"
 	"sync"
 
-	"github.com/samber/lo"
-
 	"github.com/fatedier/frp/client/event"
-	v1 "github.com/fatedier/frp/pkg/config/v1"
+	"github.com/fatedier/frp/pkg/config"
 	"github.com/fatedier/frp/pkg/msg"
 	"github.com/fatedier/frp/pkg/transport"
 	"github.com/fatedier/frp/pkg/util/xlog"
@@ -37,14 +35,14 @@ type Manager struct {
 	closed bool
 	mu     sync.RWMutex
 
-	clientCfg *v1.ClientCommonConfig
+	clientCfg config.ClientCommonConf
 
 	ctx context.Context
 }
 
 func NewManager(
 	ctx context.Context,
-	clientCfg *v1.ClientCommonConfig,
+	clientCfg config.ClientCommonConf,
 	msgTransporter transport.MessageTransporter,
 ) *Manager {
 	return &Manager{
@@ -115,18 +113,15 @@ func (pm *Manager) GetAllProxyStatus() []*WorkingStatus {
 	return ps
 }
 
-func (pm *Manager) Reload(pxyCfgs []v1.ProxyConfigurer) {
+func (pm *Manager) Reload(pxyCfgs map[string]config.ProxyConf) {
 	xl := xlog.FromContextSafe(pm.ctx)
-	pxyCfgsMap := lo.KeyBy(pxyCfgs, func(c v1.ProxyConfigurer) string {
-		return c.GetBaseConfig().Name
-	})
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
 
 	delPxyNames := make([]string, 0)
 	for name, pxy := range pm.proxies {
 		del := false
-		cfg, ok := pxyCfgsMap[name]
+		cfg, ok := pxyCfgs[name]
 		if !ok || !reflect.DeepEqual(pxy.Cfg, cfg) {
 			del = true
 		}
@@ -142,8 +137,7 @@ func (pm *Manager) Reload(pxyCfgs []v1.ProxyConfigurer) {
 	}
 
 	addPxyNames := make([]string, 0)
-	for _, cfg := range pxyCfgs {
-		name := cfg.GetBaseConfig().Name
+	for name, cfg := range pxyCfgs {
 		if _, ok := pm.proxies[name]; !ok {
 			pxy := NewWrapper(pm.ctx, cfg, pm.clientCfg, pm.HandleEvent, pm.msgTransporter)
 			pm.proxies[name] = pxy

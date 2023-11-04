@@ -16,34 +16,55 @@ package plugin
 
 import (
 	"crypto/tls"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httputil"
+	"strings"
 
-	v1 "github.com/fatedier/frp/pkg/config/v1"
 	utilnet "github.com/fatedier/frp/pkg/util/net"
 )
 
+const PluginHTTP2HTTPS = "http2https"
+
 func init() {
-	Register(v1.PluginHTTP2HTTPS, NewHTTP2HTTPSPlugin)
+	Register(PluginHTTP2HTTPS, NewHTTP2HTTPSPlugin)
 }
 
 type HTTP2HTTPSPlugin struct {
-	opts *v1.HTTP2HTTPSPluginOptions
+	hostHeaderRewrite string
+	localAddr         string
+	headers           map[string]string
 
 	l *Listener
 	s *http.Server
 }
 
-func NewHTTP2HTTPSPlugin(options v1.ClientPluginOptions) (Plugin, error) {
-	opts := options.(*v1.HTTP2HTTPSPluginOptions)
+func NewHTTP2HTTPSPlugin(params map[string]string) (Plugin, error) {
+	localAddr := params["plugin_local_addr"]
+	hostHeaderRewrite := params["plugin_host_header_rewrite"]
+	headers := make(map[string]string)
+	for k, v := range params {
+		if !strings.HasPrefix(k, "plugin_header_") {
+			continue
+		}
+		if k = strings.TrimPrefix(k, "plugin_header_"); k != "" {
+			headers[k] = v
+		}
+	}
+
+	if localAddr == "" {
+		return nil, fmt.Errorf("plugin_local_addr is required")
+	}
 
 	listener := NewProxyListener()
 
 	p := &HTTP2HTTPSPlugin{
-		opts: opts,
-		l:    listener,
+		localAddr:         localAddr,
+		hostHeaderRewrite: hostHeaderRewrite,
+		headers:           headers,
+		l:                 listener,
 	}
 
 	tr := &http.Transport{
@@ -53,11 +74,11 @@ func NewHTTP2HTTPSPlugin(options v1.ClientPluginOptions) (Plugin, error) {
 	rp := &httputil.ReverseProxy{
 		Director: func(req *http.Request) {
 			req.URL.Scheme = "https"
-			req.URL.Host = p.opts.LocalAddr
-			if p.opts.HostHeaderRewrite != "" {
-				req.Host = p.opts.HostHeaderRewrite
+			req.URL.Host = p.localAddr
+			if p.hostHeaderRewrite != "" {
+				req.Host = p.hostHeaderRewrite
 			}
-			for k, v := range p.opts.RequestHeaders.Set {
+			for k, v := range p.headers {
 				req.Header.Set(k, v)
 			}
 		},
@@ -76,15 +97,18 @@ func NewHTTP2HTTPSPlugin(options v1.ClientPluginOptions) (Plugin, error) {
 	return p, nil
 }
 
-func (p *HTTP2HTTPSPlugin) Handle(conn io.ReadWriteCloser, realConn net.Conn, _ *ExtraInfo) {
+func (p *HTTP2HTTPSPlugin) Handle(conn io.ReadWriteCloser, realConn net.Conn, extraBufToLocal []byte) {
 	wrapConn := utilnet.WrapReadWriteCloserToConn(conn, realConn)
 	_ = p.l.PutConn(wrapConn)
 }
 
 func (p *HTTP2HTTPSPlugin) Name() string {
-	return v1.PluginHTTP2HTTPS
+	return PluginHTTP2HTTPS
 }
 
 func (p *HTTP2HTTPSPlugin) Close() error {
-	return p.s.Close()
+	if err := p.s.Close(); err != nil {
+		return err
+	}
+	return nil
 }

@@ -22,41 +22,51 @@ import (
 
 	"github.com/gorilla/mux"
 
-	v1 "github.com/fatedier/frp/pkg/config/v1"
 	utilnet "github.com/fatedier/frp/pkg/util/net"
 )
 
+const PluginStaticFile = "static_file"
+
 func init() {
-	Register(v1.PluginStaticFile, NewStaticFilePlugin)
+	Register(PluginStaticFile, NewStaticFilePlugin)
 }
 
 type StaticFilePlugin struct {
-	opts *v1.StaticFilePluginOptions
+	localPath   string
+	stripPrefix string
+	httpUser    string
+	httpPasswd  string
 
 	l *Listener
 	s *http.Server
 }
 
-func NewStaticFilePlugin(options v1.ClientPluginOptions) (Plugin, error) {
-	opts := options.(*v1.StaticFilePluginOptions)
+func NewStaticFilePlugin(params map[string]string) (Plugin, error) {
+	localPath := params["plugin_local_path"]
+	stripPrefix := params["plugin_strip_prefix"]
+	httpUser := params["plugin_http_user"]
+	httpPasswd := params["plugin_http_passwd"]
 
 	listener := NewProxyListener()
 
 	sp := &StaticFilePlugin{
-		opts: opts,
+		localPath:   localPath,
+		stripPrefix: stripPrefix,
+		httpUser:    httpUser,
+		httpPasswd:  httpPasswd,
 
 		l: listener,
 	}
 	var prefix string
-	if opts.StripPrefix != "" {
-		prefix = "/" + opts.StripPrefix + "/"
+	if stripPrefix != "" {
+		prefix = "/" + stripPrefix + "/"
 	} else {
 		prefix = "/"
 	}
 
 	router := mux.NewRouter()
-	router.Use(utilnet.NewHTTPAuthMiddleware(opts.HTTPUser, opts.HTTPPassword).SetAuthFailDelay(200 * time.Millisecond).Middleware)
-	router.PathPrefix(prefix).Handler(utilnet.MakeHTTPGzipHandler(http.StripPrefix(prefix, http.FileServer(http.Dir(opts.LocalPath))))).Methods("GET")
+	router.Use(utilnet.NewHTTPAuthMiddleware(httpUser, httpPasswd).SetAuthFailDelay(200 * time.Millisecond).Middleware)
+	router.PathPrefix(prefix).Handler(utilnet.MakeHTTPGzipHandler(http.StripPrefix(prefix, http.FileServer(http.Dir(localPath))))).Methods("GET")
 	sp.s = &http.Server{
 		Handler: router,
 	}
@@ -66,13 +76,13 @@ func NewStaticFilePlugin(options v1.ClientPluginOptions) (Plugin, error) {
 	return sp, nil
 }
 
-func (sp *StaticFilePlugin) Handle(conn io.ReadWriteCloser, realConn net.Conn, _ *ExtraInfo) {
+func (sp *StaticFilePlugin) Handle(conn io.ReadWriteCloser, realConn net.Conn, extraBufToLocal []byte) {
 	wrapConn := utilnet.WrapReadWriteCloserToConn(conn, realConn)
 	_ = sp.l.PutConn(wrapConn)
 }
 
 func (sp *StaticFilePlugin) Name() string {
-	return v1.PluginStaticFile
+	return PluginStaticFile
 }
 
 func (sp *StaticFilePlugin) Close() error {

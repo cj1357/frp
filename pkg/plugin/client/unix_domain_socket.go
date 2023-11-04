@@ -15,26 +15,31 @@
 package plugin
 
 import (
+	"fmt"
 	"io"
 	"net"
 
 	libio "github.com/fatedier/golib/io"
-
-	v1 "github.com/fatedier/frp/pkg/config/v1"
 )
 
+const PluginUnixDomainSocket = "unix_domain_socket"
+
 func init() {
-	Register(v1.PluginUnixDomainSocket, NewUnixDomainSocketPlugin)
+	Register(PluginUnixDomainSocket, NewUnixDomainSocketPlugin)
 }
 
 type UnixDomainSocketPlugin struct {
 	UnixAddr *net.UnixAddr
 }
 
-func NewUnixDomainSocketPlugin(options v1.ClientPluginOptions) (p Plugin, err error) {
-	opts := options.(*v1.UnixDomainSocketPluginOptions)
+func NewUnixDomainSocketPlugin(params map[string]string) (p Plugin, err error) {
+	unixPath, ok := params["plugin_unix_path"]
+	if !ok {
+		err = fmt.Errorf("plugin_unix_path not found")
+		return
+	}
 
-	unixAddr, errRet := net.ResolveUnixAddr("unix", opts.UnixPath)
+	unixAddr, errRet := net.ResolveUnixAddr("unix", unixPath)
 	if errRet != nil {
 		err = errRet
 		return
@@ -46,13 +51,13 @@ func NewUnixDomainSocketPlugin(options v1.ClientPluginOptions) (p Plugin, err er
 	return
 }
 
-func (uds *UnixDomainSocketPlugin) Handle(conn io.ReadWriteCloser, _ net.Conn, extra *ExtraInfo) {
+func (uds *UnixDomainSocketPlugin) Handle(conn io.ReadWriteCloser, realConn net.Conn, extraBufToLocal []byte) {
 	localConn, err := net.DialUnix("unix", nil, uds.UnixAddr)
 	if err != nil {
 		return
 	}
-	if extra.ProxyProtocolHeader != nil {
-		if _, err := extra.ProxyProtocolHeader.WriteTo(localConn); err != nil {
+	if len(extraBufToLocal) > 0 {
+		if _, err := localConn.Write(extraBufToLocal); err != nil {
 			return
 		}
 	}
@@ -61,7 +66,7 @@ func (uds *UnixDomainSocketPlugin) Handle(conn io.ReadWriteCloser, _ net.Conn, e
 }
 
 func (uds *UnixDomainSocketPlugin) Name() string {
-	return v1.PluginUnixDomainSocket
+	return PluginUnixDomainSocket
 }
 
 func (uds *UnixDomainSocketPlugin) Close() error {

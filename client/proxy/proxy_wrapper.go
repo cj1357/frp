@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -27,7 +26,7 @@ import (
 
 	"github.com/fatedier/frp/client/event"
 	"github.com/fatedier/frp/client/health"
-	v1 "github.com/fatedier/frp/pkg/config/v1"
+	"github.com/fatedier/frp/pkg/config"
 	"github.com/fatedier/frp/pkg/msg"
 	"github.com/fatedier/frp/pkg/transport"
 	"github.com/fatedier/frp/pkg/util/xlog"
@@ -49,11 +48,11 @@ var (
 )
 
 type WorkingStatus struct {
-	Name  string             `json:"name"`
-	Type  string             `json:"type"`
-	Phase string             `json:"status"`
-	Err   string             `json:"err"`
-	Cfg   v1.ProxyConfigurer `json:"cfg"`
+	Name  string           `json:"name"`
+	Type  string           `json:"type"`
+	Phase string           `json:"status"`
+	Err   string           `json:"err"`
+	Cfg   config.ProxyConf `json:"cfg"`
 
 	// Got from server.
 	RemoteAddr string `json:"remote_addr"`
@@ -87,17 +86,17 @@ type Wrapper struct {
 
 func NewWrapper(
 	ctx context.Context,
-	cfg v1.ProxyConfigurer,
-	clientCfg *v1.ClientCommonConfig,
+	cfg config.ProxyConf,
+	clientCfg config.ClientCommonConf,
 	eventHandler event.Handler,
 	msgTransporter transport.MessageTransporter,
 ) *Wrapper {
 	baseInfo := cfg.GetBaseConfig()
-	xl := xlog.FromContextSafe(ctx).Spawn().AppendPrefix(baseInfo.Name)
+	xl := xlog.FromContextSafe(ctx).Spawn().AppendPrefix(baseInfo.ProxyName)
 	pw := &Wrapper{
 		WorkingStatus: WorkingStatus{
-			Name:  baseInfo.Name,
-			Type:  baseInfo.Type,
+			Name:  baseInfo.ProxyName,
+			Type:  baseInfo.ProxyType,
 			Phase: ProxyPhaseNew,
 			Cfg:   cfg,
 		},
@@ -109,11 +108,11 @@ func NewWrapper(
 		ctx:            xlog.NewContext(ctx, xl),
 	}
 
-	if baseInfo.HealthCheck.Type != "" && baseInfo.LocalPort > 0 {
+	if baseInfo.HealthCheckType != "" {
 		pw.health = 1 // means failed
-		addr := net.JoinHostPort(baseInfo.LocalIP, strconv.Itoa(baseInfo.LocalPort))
-		pw.monitor = health.NewMonitor(pw.ctx, baseInfo.HealthCheck, addr,
-			pw.statusNormalCallback, pw.statusFailedCallback)
+		pw.monitor = health.NewMonitor(pw.ctx, baseInfo.HealthCheckType, baseInfo.HealthCheckIntervalS,
+			baseInfo.HealthCheckTimeoutS, baseInfo.HealthCheckMaxFailed, baseInfo.HealthCheckAddr,
+			baseInfo.HealthCheckURL, pw.statusNormalCallback, pw.statusFailedCallback)
 		xl.Trace("enable health check monitor")
 	}
 

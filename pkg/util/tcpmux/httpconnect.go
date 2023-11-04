@@ -40,8 +40,7 @@ func NewHTTPConnectTCPMuxer(listener net.Listener, passthrough bool, timeout tim
 	ret := &HTTPConnectTCPMuxer{passthrough: passthrough}
 	mux, err := vhost.NewMuxer(listener, ret.getHostFromHTTPConnect, timeout)
 	mux.SetCheckAuthFunc(ret.auth).
-		SetSuccessHookFunc(ret.sendConnectResponse).
-		SetFailHookFunc(vhostFailed)
+		SetSuccessHookFunc(ret.sendConnectResponse)
 	ret.Muxer = mux
 	return ret, err
 }
@@ -67,7 +66,7 @@ func (muxer *HTTPConnectTCPMuxer) readHTTPConnectRequest(rd io.Reader) (host, ht
 	return
 }
 
-func (muxer *HTTPConnectTCPMuxer) sendConnectResponse(c net.Conn, _ map[string]string) error {
+func (muxer *HTTPConnectTCPMuxer) sendConnectResponse(c net.Conn, reqInfo map[string]string) error {
 	if muxer.passthrough {
 		return nil
 	}
@@ -91,15 +90,6 @@ func (muxer *HTTPConnectTCPMuxer) auth(c net.Conn, username, password string, re
 	}
 	_ = resp.Write(c)
 	return false, nil
-}
-
-func vhostFailed(c net.Conn) {
-	res := vhost.NotFoundResponse()
-	if res.Body != nil {
-		defer res.Body.Close()
-	}
-	_ = res.Write(c)
-	_ = c.Close()
 }
 
 func (muxer *HTTPConnectTCPMuxer) getHostFromHTTPConnect(c net.Conn) (net.Conn, map[string]string, error) {

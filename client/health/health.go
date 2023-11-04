@@ -21,10 +21,8 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"strings"
 	"time"
 
-	v1 "github.com/fatedier/frp/pkg/config/v1"
 	"github.com/fatedier/frp/pkg/util/xlog"
 )
 
@@ -51,33 +49,26 @@ type Monitor struct {
 	cancel context.CancelFunc
 }
 
-func NewMonitor(ctx context.Context, cfg v1.HealthCheckConfig, addr string,
+func NewMonitor(ctx context.Context, checkType string,
+	intervalS int, timeoutS int, maxFailedTimes int,
+	addr string, url string,
 	statusNormalFn func(), statusFailedFn func(),
 ) *Monitor {
-	if cfg.IntervalSeconds <= 0 {
-		cfg.IntervalSeconds = 10
+	if intervalS <= 0 {
+		intervalS = 10
 	}
-	if cfg.TimeoutSeconds <= 0 {
-		cfg.TimeoutSeconds = 3
+	if timeoutS <= 0 {
+		timeoutS = 3
 	}
-	if cfg.MaxFailed <= 0 {
-		cfg.MaxFailed = 1
+	if maxFailedTimes <= 0 {
+		maxFailedTimes = 1
 	}
 	newctx, cancel := context.WithCancel(ctx)
-
-	var url string
-	if cfg.Type == "http" && cfg.Path != "" {
-		s := "http://" + addr
-		if !strings.HasPrefix(cfg.Path, "/") {
-			s += "/"
-		}
-		url = s + cfg.Path
-	}
 	return &Monitor{
-		checkType:      cfg.Type,
-		interval:       time.Duration(cfg.IntervalSeconds) * time.Second,
-		timeout:        time.Duration(cfg.TimeoutSeconds) * time.Second,
-		maxFailedTimes: cfg.MaxFailed,
+		checkType:      checkType,
+		interval:       time.Duration(intervalS) * time.Second,
+		timeout:        time.Duration(timeoutS) * time.Second,
+		maxFailedTimes: maxFailedTimes,
 		addr:           addr,
 		url:            url,
 		statusOK:       false,

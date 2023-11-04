@@ -6,8 +6,6 @@ import (
 	"strconv"
 	"sync"
 	"time"
-
-	"github.com/fatedier/frp/pkg/config/types"
 )
 
 const (
@@ -41,7 +39,7 @@ type Manager struct {
 	mu       sync.Mutex
 }
 
-func NewManager(netType string, bindAddr string, allowPorts []types.PortsRange) *Manager {
+func NewManager(netType string, bindAddr string, allowPorts map[int]struct{}) *Manager {
 	pm := &Manager{
 		reservedPorts: make(map[string]*PortCtx),
 		usedPorts:     make(map[int]*PortCtx),
@@ -50,14 +48,8 @@ func NewManager(netType string, bindAddr string, allowPorts []types.PortsRange) 
 		netType:       netType,
 	}
 	if len(allowPorts) > 0 {
-		for _, pair := range allowPorts {
-			if pair.Single > 0 {
-				pm.freePorts[pair.Single] = struct{}{}
-			} else {
-				for i := pair.Start; i <= pair.End; i++ {
-					pm.freePorts[i] = struct{}{}
-				}
-			}
+		for port := range allowPorts {
+			pm.freePorts[port] = struct{}{}
 		}
 	} else {
 		for i := MinPort; i <= MaxPort; i++ {

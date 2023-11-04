@@ -19,7 +19,7 @@ import (
 	"net"
 	"sync"
 
-	v1 "github.com/fatedier/frp/pkg/config/v1"
+	"github.com/fatedier/frp/pkg/config"
 	"github.com/fatedier/frp/pkg/transport"
 	utilnet "github.com/fatedier/frp/pkg/util/net"
 	"github.com/fatedier/frp/pkg/util/xlog"
@@ -47,11 +47,11 @@ type Visitor interface {
 
 func NewVisitor(
 	ctx context.Context,
-	cfg v1.VisitorConfigurer,
-	clientCfg *v1.ClientCommonConfig,
+	cfg config.VisitorConf,
+	clientCfg config.ClientCommonConf,
 	helper Helper,
 ) (visitor Visitor) {
-	xl := xlog.FromContextSafe(ctx).Spawn().AppendPrefix(cfg.GetBaseConfig().Name)
+	xl := xlog.FromContextSafe(ctx).Spawn().AppendPrefix(cfg.GetBaseConfig().ProxyName)
 	baseVisitor := BaseVisitor{
 		clientCfg:  clientCfg,
 		helper:     helper,
@@ -59,18 +59,18 @@ func NewVisitor(
 		internalLn: utilnet.NewInternalListener(),
 	}
 	switch cfg := cfg.(type) {
-	case *v1.STCPVisitorConfig:
+	case *config.STCPVisitorConf:
 		visitor = &STCPVisitor{
 			BaseVisitor: &baseVisitor,
 			cfg:         cfg,
 		}
-	case *v1.XTCPVisitorConfig:
+	case *config.XTCPVisitorConf:
 		visitor = &XTCPVisitor{
 			BaseVisitor:   &baseVisitor,
 			cfg:           cfg,
 			startTunnelCh: make(chan struct{}),
 		}
-	case *v1.SUDPVisitorConfig:
+	case *config.SUDPVisitorConf:
 		visitor = &SUDPVisitor{
 			BaseVisitor:  &baseVisitor,
 			cfg:          cfg,
@@ -81,7 +81,7 @@ func NewVisitor(
 }
 
 type BaseVisitor struct {
-	clientCfg  *v1.ClientCommonConfig
+	clientCfg  config.ClientCommonConf
 	helper     Helper
 	l          net.Listener
 	internalLn *utilnet.InternalListener

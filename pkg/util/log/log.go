@@ -29,14 +29,15 @@ func init() {
 	Log.SetLogFuncCallDepth(Log.GetLogFuncCallDepth() + 1)
 }
 
-func InitLog(logFile string, logLevel string, maxdays int64, disableLogColor bool) {
-	SetLogFile(logFile, maxdays, disableLogColor)
+func InitLog(logWay string, logFile string, logLevel string, maxdays int64, disableLogColor bool) {
+	SetLogFile(logWay, logFile, maxdays, disableLogColor)
 	SetLogLevel(logLevel)
 }
 
 // SetLogFile to configure log params
-func SetLogFile(logFile string, maxdays int64, disableLogColor bool) {
-	if logFile == "console" {
+// logWay: file or console
+func SetLogFile(logWay string, logFile string, maxdays int64, disableLogColor bool) {
+	if logWay == "console" {
 		params := ""
 		if disableLogColor {
 			params = `{"color": false}`

@@ -22,17 +22,17 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"sort"
 	"strconv"
 	"time"
 
 	"github.com/fatedier/golib/net/mux"
 	fmux "github.com/hashicorp/yamux"
 	quic "github.com/quic-go/quic-go"
-	"github.com/samber/lo"
 
 	"github.com/fatedier/frp/assets"
 	"github.com/fatedier/frp/pkg/auth"
-	v1 "github.com/fatedier/frp/pkg/config/v1"
+	"github.com/fatedier/frp/pkg/config"
 	modelmetrics "github.com/fatedier/frp/pkg/metrics"
 	"github.com/fatedier/frp/pkg/msg"
 	"github.com/fatedier/frp/pkg/nathole"
@@ -70,7 +70,7 @@ type Service struct {
 	kcpListener net.Listener
 
 	// Accept connections using quic
-	quicListener *quic.Listener
+	quicListener quic.Listener
 
 	// Accept connections using websocket
 	websocketListener net.Listener
@@ -98,7 +98,7 @@ type Service struct {
 
 	tlsConfig *tls.Config
 
-	cfg *v1.ServerConfig
+	cfg config.ServerCommonConf
 
 	// service context
 	ctx context.Context
@@ -106,15 +106,16 @@ type Service struct {
 	cancel context.CancelFunc
 }
 
-func NewService(cfg *v1.ServerConfig) (svr *Service, err error) {
+func NewService(cfg config.ServerCommonConf) (svr *Service, err error) {
 	tlsConfig, err := transport.NewServerTLSConfig(
-		cfg.Transport.TLS.CertFile,
-		cfg.Transport.TLS.KeyFile,
-		cfg.Transport.TLS.TrustedCaFile)
+		cfg.TLSCertFile,
+		cfg.TLSKeyFile,
+		cfg.TLSTrustedCaFile)
 	if err != nil {
 		return
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
 	svr = &Service{
 		ctlManager:    NewControlManager(),
 		pxyManager:    proxy.NewManager(),
@@ -125,10 +126,11 @@ func NewService(cfg *v1.ServerConfig) (svr *Service, err error) {
 			UDPPortManager: ports.NewManager("udp", cfg.ProxyBindAddr, cfg.AllowPorts),
 		},
 		httpVhostRouter: vhost.NewRouters(),
-		authVerifier:    auth.NewAuthVerifier(cfg.Auth),
+		authVerifier:    auth.NewAuthVerifier(cfg.ServerConfig),
 		tlsConfig:       tlsConfig,
 		cfg:             cfg,
-		ctx:             context.Background(),
+		ctx:             ctx,
+		cancel:          cancel,
 	}
 
 	// Create tcpmux httpconnect multiplexer.
@@ -150,9 +152,15 @@ func NewService(cfg *v1.ServerConfig) (svr *Service, err error) {
 	}
 
 	// Init all plugins
-	for _, p := range cfg.HTTPPlugins {
-		svr.pluginManager.Register(plugin.NewHTTPPluginOptions(p))
-		log.Info("plugin [%s] has been registered", p.Name)
+	pluginNames := make([]string, 0, len(cfg.HTTPPlugins))
+	for n := range cfg.HTTPPlugins {
+		pluginNames = append(pluginNames, n)
+	}
+	sort.Strings(pluginNames)
+
+	for _, name := range pluginNames {
+		svr.pluginManager.Register(plugin.NewHTTPPluginOptions(cfg.HTTPPlugins[name]))
+		log.Info("plugin [%s] has been registered", name)
 	}
 	svr.rc.PluginManager = svr.pluginManager
 
@@ -190,7 +198,7 @@ func NewService(cfg *v1.ServerConfig) (svr *Service, err error) {
 	}
 
 	svr.muxer = mux.NewMux(ln)
-	svr.muxer.SetKeepAlive(time.Duration(cfg.Transport.TCPKeepAlive) * time.Second)
+	svr.muxer.SetKeepAlive(time.Duration(cfg.TCPKeepAlive) * time.Second)
 	go func() {
 		_ = svr.muxer.Serve()
 	}()
@@ -215,9 +223,9 @@ func NewService(cfg *v1.ServerConfig) (svr *Service, err error) {
 		quicTLSCfg := tlsConfig.Clone()
 		quicTLSCfg.NextProtos = []string{"frp"}
 		svr.quicListener, err = quic.ListenAddr(address, quicTLSCfg, &quic.Config{
-			MaxIdleTimeout:     time.Duration(cfg.Transport.QUIC.MaxIdleTimeout) * time.Second,
-			MaxIncomingStreams: int64(cfg.Transport.QUIC.MaxIncomingStreams),
-			KeepAlivePeriod:    time.Duration(cfg.Transport.QUIC.KeepalivePeriod) * time.Second,
+			MaxIdleTimeout:     time.Duration(cfg.QUICMaxIdleTimeout) * time.Second,
+			MaxIncomingStreams: int64(cfg.QUICMaxIncomingStreams),
+			KeepAlivePeriod:    time.Duration(cfg.QUICKeepalivePeriod) * time.Second,
 		})
 		if err != nil {
 			err = fmt.Errorf("listen on quic udp address %s error: %v", address, err)
@@ -299,11 +307,11 @@ func NewService(cfg *v1.ServerConfig) (svr *Service, err error) {
 
 	var statsEnable bool
 	// Create dashboard web server.
-	if cfg.WebServer.Port > 0 {
+	if cfg.DashboardPort > 0 {
 		// Init dashboard assets
-		assets.Load(cfg.WebServer.AssetsDir)
+		assets.Load(cfg.AssetsDir)
 
-		address := net.JoinHostPort(cfg.WebServer.Addr, strconv.Itoa(cfg.WebServer.Port))
+		address := net.JoinHostPort(cfg.DashboardAddr, strconv.Itoa(cfg.DashboardPort))
 		err = svr.RunDashboardServer(address)
 		if err != nil {
 			err = fmt.Errorf("create dashboard web server error, %v", err)
@@ -321,11 +329,7 @@ func NewService(cfg *v1.ServerConfig) (svr *Service, err error) {
 	return
 }
 
-func (svr *Service) Run(ctx context.Context) {
-	ctx, cancel := context.WithCancel(ctx)
-	svr.ctx = ctx
-	svr.cancel = cancel
-
+func (svr *Service) Run() {
 	if svr.kcpListener != nil {
 		go svr.HandleListener(svr.kcpListener)
 	}
@@ -339,39 +343,27 @@ func (svr *Service) Run(ctx context.Context) {
 		go svr.rc.NatHoleController.CleanWorker(svr.ctx)
 	}
 	svr.HandleListener(svr.listener)
-
-	<-svr.ctx.Done()
-	// service context may not be canceled by svr.Close(), we should call it here to release resources
-	if svr.listener != nil {
-		svr.Close()
-	}
 }
 
 func (svr *Service) Close() error {
 	if svr.kcpListener != nil {
 		svr.kcpListener.Close()
-		svr.kcpListener = nil
 	}
 	if svr.quicListener != nil {
 		svr.quicListener.Close()
-		svr.quicListener = nil
 	}
 	if svr.websocketListener != nil {
 		svr.websocketListener.Close()
-		svr.websocketListener = nil
 	}
 	if svr.tlsListener != nil {
 		svr.tlsListener.Close()
-		svr.tlsConfig = nil
 	}
 	if svr.listener != nil {
 		svr.listener.Close()
-		svr.listener = nil
 	}
+	svr.cancel()
+
 	svr.ctlManager.Close()
-	if svr.cancel != nil {
-		svr.cancel()
-	}
 	return nil
 }
 
@@ -410,7 +402,7 @@ func (svr *Service) handleConnection(ctx context.Context, conn net.Conn) {
 			xl.Warn("register control error: %v", err)
 			_ = msg.WriteMsg(conn, &msg.LoginResp{
 				Version: version.Full(),
-				Error:   util.GenerateResponseErrorString("register control error", err, lo.FromPtr(svr.cfg.DetailedErrorsToClient)),
+				Error:   util.GenerateResponseErrorString("register control error", err, svr.cfg.DetailedErrorsToClient),
 			})
 			conn.Close()
 		}
@@ -423,7 +415,7 @@ func (svr *Service) handleConnection(ctx context.Context, conn net.Conn) {
 			xl.Warn("register visitor conn error: %v", err)
 			_ = msg.WriteMsg(conn, &msg.NewVisitorConnResp{
 				ProxyName: m.ProxyName,
-				Error:     util.GenerateResponseErrorString("register visitor conn error", err, lo.FromPtr(svr.cfg.DetailedErrorsToClient)),
+				Error:     util.GenerateResponseErrorString("register visitor conn error", err, svr.cfg.DetailedErrorsToClient),
 			})
 			conn.Close()
 		} else {
@@ -455,7 +447,7 @@ func (svr *Service) HandleListener(l net.Listener) {
 		log.Trace("start check TLS connection...")
 		originConn := c
 		var isTLS, custom bool
-		c, isTLS, custom, err = utilnet.CheckAndEnableTLSServerConnWithTimeout(c, svr.tlsConfig, svr.cfg.Transport.TLS.Force, connReadTimeout)
+		c, isTLS, custom, err = utilnet.CheckAndEnableTLSServerConnWithTimeout(c, svr.tlsConfig, svr.cfg.TLSOnly, connReadTimeout)
 		if err != nil {
 			log.Warn("CheckAndEnableTLSServerConnWithTimeout error: %v", err)
 			originConn.Close()
@@ -465,9 +457,9 @@ func (svr *Service) HandleListener(l net.Listener) {
 
 		// Start a new goroutine to handle connection.
 		go func(ctx context.Context, frpConn net.Conn) {
-			if lo.FromPtr(svr.cfg.Transport.TCPMux) {
+			if svr.cfg.TCPMux {
 				fmuxCfg := fmux.DefaultConfig()
-				fmuxCfg.KeepAliveInterval = time.Duration(svr.cfg.Transport.TCPMuxKeepaliveInterval) * time.Second
+				fmuxCfg.KeepAliveInterval = time.Duration(svr.cfg.TCPMuxKeepaliveInterval) * time.Second
 				fmuxCfg.LogOutput = io.Discard
 				fmuxCfg.MaxStreamWindowSize = 6 * 1024 * 1024
 				session, err := fmux.Server(frpConn, fmuxCfg)
@@ -493,7 +485,7 @@ func (svr *Service) HandleListener(l net.Listener) {
 	}
 }
 
-func (svr *Service) HandleQUICListener(l *quic.Listener) {
+func (svr *Service) HandleQUICListener(l quic.Listener) {
 	// Listen for incoming connections from client.
 	for {
 		c, err := l.Accept(context.Background())
@@ -516,14 +508,13 @@ func (svr *Service) HandleQUICListener(l *quic.Listener) {
 	}
 }
 
-func (svr *Service) RegisterControl(ctlConn net.Conn, loginMsg *msg.Login) error {
+func (svr *Service) RegisterControl(ctlConn net.Conn, loginMsg *msg.Login) (err error) {
 	// If client's RunID is empty, it's a new client, we just create a new controller.
 	// Otherwise, we check if there is one controller has the same run id. If so, we release previous controller and start new one.
-	var err error
 	if loginMsg.RunID == "" {
 		loginMsg.RunID, err = util.RandID()
 		if err != nil {
-			return err
+			return
 		}
 	}
 
@@ -534,19 +525,20 @@ func (svr *Service) RegisterControl(ctlConn net.Conn, loginMsg *msg.Login) error
 	xl.Info("client login info: ip [%s] version [%s] hostname [%s] os [%s] arch [%s]",
 		ctlConn.RemoteAddr().String(), loginMsg.Version, loginMsg.Hostname, loginMsg.Os, loginMsg.Arch)
 
-	// Check auth.
-	if err := svr.authVerifier.VerifyLogin(loginMsg); err != nil {
-		return err
+	// Check client version.
+	if ok, msg := version.Compat(loginMsg.Version); !ok {
+		err = fmt.Errorf("%s", msg)
+		return
 	}
 
-	ctl, err := NewControl(ctx, svr.rc, svr.pxyManager, svr.pluginManager, svr.authVerifier, ctlConn, loginMsg, svr.cfg)
-	if err != nil {
-		xl.Warn("create new controller error: %v", err)
-		// don't return detailed errors to client
-		return fmt.Errorf("unexpect error when creating new controller")
+	// Check auth.
+	if err = svr.authVerifier.VerifyLogin(loginMsg); err != nil {
+		return
 	}
+
+	ctl := NewControl(ctx, svr.rc, svr.pxyManager, svr.pluginManager, svr.authVerifier, ctlConn, loginMsg, svr.cfg)
 	if oldCtl := svr.ctlManager.Add(loginMsg.RunID, ctl); oldCtl != nil {
-		oldCtl.WaitClosed()
+		oldCtl.allShutdown.WaitDone()
 	}
 
 	ctl.Start()
@@ -559,7 +551,7 @@ func (svr *Service) RegisterControl(ctlConn net.Conn, loginMsg *msg.Login) error
 		ctl.WaitClosed()
 		svr.ctlManager.Del(loginMsg.RunID, ctl)
 	}()
-	return nil
+	return
 }
 
 // RegisterWorkConn register a new work connection to control and proxies need it.
@@ -588,7 +580,7 @@ func (svr *Service) RegisterWorkConn(workConn net.Conn, newMsg *msg.NewWorkConn)
 	if err != nil {
 		xl.Warn("invalid NewWorkConn with run id [%s]", newMsg.RunID)
 		_ = msg.WriteMsg(workConn, &msg.StartWorkConn{
-			Error: util.GenerateResponseErrorString("invalid NewWorkConn", err, lo.FromPtr(svr.cfg.DetailedErrorsToClient)),
+			Error: util.GenerateResponseErrorString("invalid NewWorkConn", err, ctl.serverCfg.DetailedErrorsToClient),
 		})
 		return fmt.Errorf("invalid NewWorkConn with run id [%s]", newMsg.RunID)
 	}
@@ -597,8 +589,7 @@ func (svr *Service) RegisterWorkConn(workConn net.Conn, newMsg *msg.NewWorkConn)
 
 func (svr *Service) RegisterVisitorConn(visitorConn net.Conn, newMsg *msg.NewVisitorConn) error {
 	visitorUser := ""
-	// TODO(deprecation): Compatible with old versions, can be without runID, user is empty. In later versions, it will be mandatory to include runID.
-	// If runID is required, it is not compatible with versions prior to v0.50.0.
+	// TODO: Compatible with old versions, can be without runID, user is empty. In later versions, it will be mandatory to include runID.
 	if newMsg.RunID != "" {
 		ctl, exist := svr.ctlManager.GetByID(newMsg.RunID)
 		if !exist {

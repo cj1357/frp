@@ -38,7 +38,7 @@ func (svr *Service) RunAdminServer(address string) (err error) {
 	router.HandleFunc("/healthz", svr.healthz)
 
 	// debug
-	if svr.cfg.WebServer.PprofEnable {
+	if svr.cfg.PprofEnable {
 		router.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
 		router.HandleFunc("/debug/pprof/profile", pprof.Profile)
 		router.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
@@ -47,12 +47,11 @@ func (svr *Service) RunAdminServer(address string) (err error) {
 	}
 
 	subRouter := router.NewRoute().Subrouter()
-	user, passwd := svr.cfg.WebServer.User, svr.cfg.WebServer.Password
+	user, passwd := svr.cfg.AdminUser, svr.cfg.AdminPwd
 	subRouter.Use(utilnet.NewHTTPAuthMiddleware(user, passwd).SetAuthFailDelay(200 * time.Millisecond).Middleware)
 
 	// api, see admin_api.go
 	subRouter.HandleFunc("/api/reload", svr.apiReload).Methods("GET")
-	subRouter.HandleFunc("/api/stop", svr.apiStop).Methods("POST")
 	subRouter.HandleFunc("/api/status", svr.apiStatus).Methods("GET")
 	subRouter.HandleFunc("/api/config", svr.apiGetConfig).Methods("GET")
 	subRouter.HandleFunc("/api/config", svr.apiPutConfig).Methods("PUT")

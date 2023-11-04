@@ -25,7 +25,7 @@ import (
 	"github.com/fatedier/golib/errors"
 	libio "github.com/fatedier/golib/io"
 
-	v1 "github.com/fatedier/frp/pkg/config/v1"
+	"github.com/fatedier/frp/pkg/config"
 	"github.com/fatedier/frp/pkg/msg"
 	"github.com/fatedier/frp/pkg/proto/udp"
 	utilnet "github.com/fatedier/frp/pkg/util/net"
@@ -42,7 +42,7 @@ type SUDPVisitor struct {
 	readCh  chan *msg.UDPPacket
 	sendCh  chan *msg.UDPPacket
 
-	cfg *v1.SUDPVisitorConfig
+	cfg *config.SUDPVisitorConf
 }
 
 // SUDP Run start listen a udp port
@@ -208,10 +208,10 @@ func (sv *SUDPVisitor) getNewVisitorConn() (net.Conn, error) {
 	newVisitorConnMsg := &msg.NewVisitorConn{
 		RunID:          sv.helper.RunID(),
 		ProxyName:      sv.cfg.ServerName,
-		SignKey:        util.GetAuthKey(sv.cfg.SecretKey, now),
+		SignKey:        util.GetAuthKey(sv.cfg.Sk, now),
 		Timestamp:      now,
-		UseEncryption:  sv.cfg.Transport.UseEncryption,
-		UseCompression: sv.cfg.Transport.UseCompression,
+		UseEncryption:  sv.cfg.UseEncryption,
+		UseCompression: sv.cfg.UseCompression,
 	}
 	err = msg.WriteMsg(visitorConn, newVisitorConnMsg)
 	if err != nil {
@@ -232,14 +232,14 @@ func (sv *SUDPVisitor) getNewVisitorConn() (net.Conn, error) {
 
 	var remote io.ReadWriteCloser
 	remote = visitorConn
-	if sv.cfg.Transport.UseEncryption {
-		remote, err = libio.WithEncryption(remote, []byte(sv.cfg.SecretKey))
+	if sv.cfg.UseEncryption {
+		remote, err = libio.WithEncryption(remote, []byte(sv.cfg.Sk))
 		if err != nil {
 			xl.Error("create encryption stream error: %v", err)
 			return nil, err
 		}
 	}
-	if sv.cfg.Transport.UseCompression {
+	if sv.cfg.UseCompression {
 		remote = libio.WithCompression(remote)
 	}
 	return utilnet.WrapReadWriteCloserToConn(remote, visitorConn), nil

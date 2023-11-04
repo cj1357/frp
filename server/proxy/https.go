@@ -18,22 +18,22 @@ import (
 	"reflect"
 	"strings"
 
-	v1 "github.com/fatedier/frp/pkg/config/v1"
+	"github.com/fatedier/frp/pkg/config"
 	"github.com/fatedier/frp/pkg/util/util"
 	"github.com/fatedier/frp/pkg/util/vhost"
 )
 
 func init() {
-	RegisterProxyFactory(reflect.TypeOf(&v1.HTTPSProxyConfig{}), NewHTTPSProxy)
+	RegisterProxyFactory(reflect.TypeOf(&config.HTTPSProxyConf{}), NewHTTPSProxy)
 }
 
 type HTTPSProxy struct {
 	*BaseProxy
-	cfg *v1.HTTPSProxyConfig
+	cfg *config.HTTPSProxyConf
 }
 
-func NewHTTPSProxy(baseProxy *BaseProxy) Proxy {
-	unwrapped, ok := baseProxy.GetConfigurer().(*v1.HTTPSProxyConfig)
+func NewHTTPSProxy(baseProxy *BaseProxy, cfg config.ProxyConf) Proxy {
+	unwrapped, ok := cfg.(*config.HTTPSProxyConf)
 	if !ok {
 		return nil
 	}
@@ -84,6 +84,10 @@ func (pxy *HTTPSProxy) Run() (remoteAddr string, err error) {
 	pxy.startCommonTCPListenersHandler()
 	remoteAddr = strings.Join(addrs, ",")
 	return
+}
+
+func (pxy *HTTPSProxy) GetConf() config.ProxyConf {
+	return pxy.cfg
 }
 
 func (pxy *HTTPSProxy) Close() {

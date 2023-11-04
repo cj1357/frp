@@ -27,8 +27,7 @@ import (
 	libio "github.com/fatedier/golib/io"
 	"golang.org/x/time/rate"
 
-	"github.com/fatedier/frp/pkg/config/types"
-	v1 "github.com/fatedier/frp/pkg/config/v1"
+	"github.com/fatedier/frp/pkg/config"
 	"github.com/fatedier/frp/pkg/msg"
 	plugin "github.com/fatedier/frp/pkg/plugin/server"
 	"github.com/fatedier/frp/pkg/util/limit"
@@ -38,9 +37,9 @@ import (
 	"github.com/fatedier/frp/server/metrics"
 )
 
-var proxyFactoryRegistry = map[reflect.Type]func(*BaseProxy) Proxy{}
+var proxyFactoryRegistry = map[reflect.Type]func(*BaseProxy, config.ProxyConf) Proxy{}
 
-func RegisterProxyFactory(proxyConfType reflect.Type, factory func(*BaseProxy) Proxy) {
+func RegisterProxyFactory(proxyConfType reflect.Type, factory func(*BaseProxy, config.ProxyConf) Proxy) {
 	proxyFactoryRegistry[proxyConfType] = factory
 }
 
@@ -50,7 +49,7 @@ type Proxy interface {
 	Context() context.Context
 	Run() (remoteAddr string, err error)
 	GetName() string
-	GetConfigurer() v1.ProxyConfigurer
+	GetConf() config.ProxyConf
 	GetWorkConnFromPool(src, dst net.Addr) (workConn net.Conn, err error)
 	GetUsedPortsNum() int
 	GetResourceController() *controller.ResourceController
@@ -67,11 +66,11 @@ type BaseProxy struct {
 	usedPortsNum  int
 	poolCount     int
 	getWorkConnFn GetWorkConnFn
-	serverCfg     *v1.ServerConfig
+	serverCfg     config.ServerCommonConf
 	limiter       *rate.Limiter
 	userInfo      plugin.UserInfo
 	loginMsg      *msg.Login
-	configurer    v1.ProxyConfigurer
+	pxyConf       config.ProxyConf
 
 	mu  sync.RWMutex
 	xl  *xlog.Logger
@@ -104,10 +103,6 @@ func (pxy *BaseProxy) GetLoginMsg() *msg.Login {
 
 func (pxy *BaseProxy) GetLimiter() *rate.Limiter {
 	return pxy.limiter
-}
-
-func (pxy *BaseProxy) GetConfigurer() v1.ProxyConfigurer {
-	return pxy.configurer
 }
 
 func (pxy *BaseProxy) Close() {
@@ -214,13 +209,13 @@ func (pxy *BaseProxy) handleUserTCPConnection(userConn net.Conn) {
 	defer userConn.Close()
 
 	serverCfg := pxy.serverCfg
-	cfg := pxy.configurer.GetBaseConfig()
+	cfg := pxy.pxyConf.GetBaseConfig()
 	// server plugin hook
 	rc := pxy.GetResourceController()
 	content := &plugin.NewUserConnContent{
 		User:       pxy.GetUserInfo(),
 		ProxyName:  pxy.GetName(),
-		ProxyType:  cfg.Type,
+		ProxyType:  cfg.ProxyType,
 		RemoteAddr: userConn.RemoteAddr().String(),
 	}
 	_, err := rc.PluginManager.NewUserConn(content)
@@ -237,19 +232,16 @@ func (pxy *BaseProxy) handleUserTCPConnection(userConn net.Conn) {
 	defer workConn.Close()
 
 	var local io.ReadWriteCloser = workConn
-	xl.Trace("handler user tcp connection, use_encryption: %t, use_compression: %t",
-		cfg.Transport.UseEncryption, cfg.Transport.UseCompression)
-	if cfg.Transport.UseEncryption {
-		local, err = libio.WithEncryption(local, []byte(serverCfg.Auth.Token))
+	xl.Trace("handler user tcp connection, use_encryption: %t, use_compression: %t", cfg.UseEncryption, cfg.UseCompression)
+	if cfg.UseEncryption {
+		local, err = libio.WithEncryption(local, []byte(serverCfg.Token))
 		if err != nil {
 			xl.Error("create encryption stream error: %v", err)
 			return
 		}
 	}
-	if cfg.Transport.UseCompression {
-		var recycleFn func()
-		local, recycleFn = libio.WithCompressionFromPool(local)
-		defer recycleFn()
+	if cfg.UseCompression {
+		local = libio.WithCompression(local)
 	}
 
 	if pxy.GetLimiter() != nil {
@@ -262,7 +254,7 @@ func (pxy *BaseProxy) handleUserTCPConnection(userConn net.Conn) {
 		workConn.RemoteAddr().String(), userConn.LocalAddr().String(), userConn.RemoteAddr().String())
 
 	name := pxy.GetName()
-	proxyType := cfg.Type
+	proxyType := cfg.ProxyType
 	metrics.Server.OpenConnection(name, proxyType)
 	inCount, outCount, _ := libio.Join(local, userConn)
 	metrics.Server.CloseConnection(name, proxyType)
@@ -271,46 +263,37 @@ func (pxy *BaseProxy) handleUserTCPConnection(userConn net.Conn) {
 	xl.Debug("join connections closed")
 }
 
-type Options struct {
-	UserInfo           plugin.UserInfo
-	LoginMsg           *msg.Login
-	PoolCount          int
-	ResourceController *controller.ResourceController
-	GetWorkConnFn      GetWorkConnFn
-	Configurer         v1.ProxyConfigurer
-	ServerCfg          *v1.ServerConfig
-}
-
-func NewProxy(ctx context.Context, options *Options) (pxy Proxy, err error) {
-	configurer := options.Configurer
-	xl := xlog.FromContextSafe(ctx).Spawn().AppendPrefix(configurer.GetBaseConfig().Name)
+func NewProxy(ctx context.Context, userInfo plugin.UserInfo, rc *controller.ResourceController, poolCount int,
+	getWorkConnFn GetWorkConnFn, pxyConf config.ProxyConf, serverCfg config.ServerCommonConf, loginMsg *msg.Login,
+) (pxy Proxy, err error) {
+	xl := xlog.FromContextSafe(ctx).Spawn().AppendPrefix(pxyConf.GetBaseConfig().ProxyName)
 
 	var limiter *rate.Limiter
-	limitBytes := configurer.GetBaseConfig().Transport.BandwidthLimit.Bytes()
-	if limitBytes > 0 && configurer.GetBaseConfig().Transport.BandwidthLimitMode == types.BandwidthLimitModeServer {
+	limitBytes := pxyConf.GetBaseConfig().BandwidthLimit.Bytes()
+	if limitBytes > 0 && pxyConf.GetBaseConfig().BandwidthLimitMode == config.BandwidthLimitModeServer {
 		limiter = rate.NewLimiter(rate.Limit(float64(limitBytes)), int(limitBytes))
 	}
 
 	basePxy := BaseProxy{
-		name:          configurer.GetBaseConfig().Name,
-		rc:            options.ResourceController,
+		name:          pxyConf.GetBaseConfig().ProxyName,
+		rc:            rc,
 		listeners:     make([]net.Listener, 0),
-		poolCount:     options.PoolCount,
-		getWorkConnFn: options.GetWorkConnFn,
-		serverCfg:     options.ServerCfg,
+		poolCount:     poolCount,
+		getWorkConnFn: getWorkConnFn,
+		serverCfg:     serverCfg,
 		limiter:       limiter,
 		xl:            xl,
 		ctx:           xlog.NewContext(ctx, xl),
-		userInfo:      options.UserInfo,
-		loginMsg:      options.LoginMsg,
-		configurer:    configurer,
+		userInfo:      userInfo,
+		loginMsg:      loginMsg,
+		pxyConf:       pxyConf,
 	}
 
-	factory := proxyFactoryRegistry[reflect.TypeOf(configurer)]
+	factory := proxyFactoryRegistry[reflect.TypeOf(pxyConf)]
 	if factory == nil {
 		return pxy, fmt.Errorf("proxy type not support")
 	}
-	pxy = factory(&basePxy)
+	pxy = factory(&basePxy, pxyConf)
 	if pxy == nil {
 		return nil, fmt.Errorf("proxy not created")
 	}

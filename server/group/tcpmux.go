@@ -22,7 +22,7 @@ import (
 
 	gerr "github.com/fatedier/golib/errors"
 
-	v1 "github.com/fatedier/frp/pkg/config/v1"
+	"github.com/fatedier/frp/pkg/consts"
 	"github.com/fatedier/frp/pkg/util/tcpmux"
 	"github.com/fatedier/frp/pkg/util/vhost"
 )
@@ -59,8 +59,8 @@ func (tmgc *TCPMuxGroupCtl) Listen(
 	}
 	tmgc.mu.Unlock()
 
-	switch v1.TCPMultiplexerType(multiplexer) {
-	case v1.TCPMultiplexerHTTPConnect:
+	switch multiplexer {
+	case consts.HTTPConnectTCPMultiplexer:
 		return tcpMuxGroup.HTTPConnectListen(ctx, group, groupKey, routeConfig)
 	default:
 		err = fmt.Errorf("unknown multiplexer [%s]", multiplexer)

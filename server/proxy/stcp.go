@@ -17,20 +17,20 @@ package proxy
 import (
 	"reflect"
 
-	v1 "github.com/fatedier/frp/pkg/config/v1"
+	"github.com/fatedier/frp/pkg/config"
 )
 
 func init() {
-	RegisterProxyFactory(reflect.TypeOf(&v1.STCPProxyConfig{}), NewSTCPProxy)
+	RegisterProxyFactory(reflect.TypeOf(&config.STCPProxyConf{}), NewSTCPProxy)
 }
 
 type STCPProxy struct {
 	*BaseProxy
-	cfg *v1.STCPProxyConfig
+	cfg *config.STCPProxyConf
 }
 
-func NewSTCPProxy(baseProxy *BaseProxy) Proxy {
-	unwrapped, ok := baseProxy.GetConfigurer().(*v1.STCPProxyConfig)
+func NewSTCPProxy(baseProxy *BaseProxy, cfg config.ProxyConf) Proxy {
+	unwrapped, ok := cfg.(*config.STCPProxyConf)
 	if !ok {
 		return nil
 	}
@@ -47,7 +47,7 @@ func (pxy *STCPProxy) Run() (remoteAddr string, err error) {
 	if len(allowUsers) == 0 {
 		allowUsers = []string{pxy.GetUserInfo().User}
 	}
-	listener, errRet := pxy.rc.VisitorManager.Listen(pxy.GetName(), pxy.cfg.Secretkey, allowUsers)
+	listener, errRet := pxy.rc.VisitorManager.Listen(pxy.GetName(), pxy.cfg.Sk, allowUsers)
 	if errRet != nil {
 		err = errRet
 		return
@@ -57,6 +57,10 @@ func (pxy *STCPProxy) Run() (remoteAddr string, err error) {
 
 	pxy.startCommonTCPListenersHandler()
 	return
+}
+
+func (pxy *STCPProxy) GetConf() config.ProxyConf {
+	return pxy.cfg
 }
 
 func (pxy *STCPProxy) Close() {

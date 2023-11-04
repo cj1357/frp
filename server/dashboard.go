@@ -39,7 +39,7 @@ func (svr *Service) RunDashboardServer(address string) (err error) {
 	router.HandleFunc("/healthz", svr.Healthz)
 
 	// debug
-	if svr.cfg.WebServer.PprofEnable {
+	if svr.cfg.PprofEnable {
 		router.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
 		router.HandleFunc("/debug/pprof/profile", pprof.Profile)
 		router.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
@@ -49,7 +49,7 @@ func (svr *Service) RunDashboardServer(address string) (err error) {
 
 	subRouter := router.NewRoute().Subrouter()
 
-	user, passwd := svr.cfg.WebServer.User, svr.cfg.WebServer.Password
+	user, passwd := svr.cfg.DashboardUser, svr.cfg.DashboardPwd
 	subRouter.Use(utilnet.NewHTTPAuthMiddleware(user, passwd).SetAuthFailDelay(200 * time.Millisecond).Middleware)
 
 	// metrics
@@ -82,8 +82,8 @@ func (svr *Service) RunDashboardServer(address string) (err error) {
 		return err
 	}
 
-	if svr.cfg.WebServer.TLS != nil {
-		cert, err := tls.LoadX509KeyPair(svr.cfg.WebServer.TLS.CertFile, svr.cfg.WebServer.TLS.KeyFile)
+	if svr.cfg.DashboardTLSMode {
+		cert, err := tls.LoadX509KeyPair(svr.cfg.DashboardTLSCertFile, svr.cfg.DashboardTLSKeyFile)
 		if err != nil {
 			return err
 		}

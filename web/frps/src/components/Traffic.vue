@@ -1,5 +1,5 @@
 <template>
-  <div :id="proxyName" style="width: 600px; height: 400px"></div>
+  <div :id="proxy_name" style="width: 600px; height: 400px"></div>
 </template>
 
 <script setup lang="ts">
@@ -7,17 +7,17 @@ import { ElMessage } from 'element-plus'
 import { DrawProxyTrafficChart } from '../utils/chart.js'
 
 const props = defineProps<{
-  proxyName: string
+  proxy_name: string
 }>()
 
 const fetchData = () => {
-  let url = '../api/traffic/' + props.proxyName
+  let url = '../api/traffic/' + props.proxy_name
   fetch(url, { credentials: 'include' })
     .then((res) => {
       return res.json()
     })
     .then((json) => {
-      DrawProxyTrafficChart(props.proxyName, json.trafficIn, json.trafficOut)
+      DrawProxyTrafficChart(props.proxy_name, json.traffic_in, json.traffic_out)
     })
     .catch((err) => {
       ElMessage({

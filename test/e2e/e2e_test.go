@@ -10,13 +10,10 @@ import (
 
 	"github.com/fatedier/frp/pkg/util/log"
 	// test source
+	_ "github.com/fatedier/frp/test/e2e/basic"
+	_ "github.com/fatedier/frp/test/e2e/features"
 	"github.com/fatedier/frp/test/e2e/framework"
-	_ "github.com/fatedier/frp/test/e2e/legacy/basic"
-	_ "github.com/fatedier/frp/test/e2e/legacy/features"
-	_ "github.com/fatedier/frp/test/e2e/legacy/plugin"
-	_ "github.com/fatedier/frp/test/e2e/v1/basic"
-	_ "github.com/fatedier/frp/test/e2e/v1/features"
-	_ "github.com/fatedier/frp/test/e2e/v1/plugin"
+	_ "github.com/fatedier/frp/test/e2e/plugin"
 )
 
 // handleFlags sets up all flags and parses the command line.
@@ -34,7 +31,7 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
-	log.InitLog("console", framework.TestContext.LogLevel, 0, true)
+	log.InitLog("console", "", framework.TestContext.LogLevel, 0, true)
 	os.Exit(m.Run())
 }
 
